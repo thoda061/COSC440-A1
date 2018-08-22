@@ -92,9 +92,10 @@ void free_memory_pages(void) {
 
   list_for_each_safe(ptr, tmp, &asgn1_device.mem_list) {
 	curr = list_entry(ptr, struct page_node_rec, list);
-	if (curr->page != NULL) __free_page(curr->page);
+	if (curr->page != NULL) __free_pages(curr->page, 0);
+	//printk(KERN_INFO "page address %x\n", page_address(curr->page));
 	list_del(&curr->list);
-	kmem_cache_free(asgn1_device.cache, &curr);
+	kmem_cache_free(asgn1_device.cache, curr);
   }
   asgn1_device.data_size = 0;
   asgn1_device.num_pages = 0;
@@ -158,6 +159,7 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
 
   struct list_head *ptr = asgn1_device.mem_list.next;
   page_node *curr;
+  //char *tp;
 
   /* COMPLETE ME */
   /**
@@ -179,22 +181,30 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
 
   if(*f_pos > asgn1_device.data_size) return 0;
   list_for_each(ptr, &asgn1_device.mem_list) {
+	  //printk(KERN_INFO "ptr addresss %x\n", ptr);
 	  if(curr_page_no >= begin_page_no) {
 		  curr = list_entry(ptr, struct page_node_rec, list);
 		  size_to_be_read = min(count, (size_t)PAGE_SIZE);
 		  curr_size_read = 0;
+		 // printk(KERN_INFO "size_to_be_read %i\n", size_to_be_read);
 		  do {
-	          begin_offset = curr_size_read;
-		  curr_size_read += 
-		 	  copy_to_user(&buf[begin_offset], 
-					  page_address(curr->page),
-					  size_to_be_read);
-		  printk(KERN_INFO "current read %i\n", curr_size_read);
+	          	begin_offset = curr_size_read;
+		  	curr_size_read += (size_to_be_read -
+		 	  	copy_to_user(buf+begin_offset, 
+					  page_address(curr->page)+begin_offset,
+					  size_to_be_read));
+		  	tp = page_address(curr->page);
+		  	//printk(KERN_INFO "page_addresss %c %c %c\n", tp[0], tp[1], tp[3]);
+		  	//printk(KERN_INFO "current read %i\n", curr_size_read);
 		  } while (curr_size_read < size_to_be_read);
 		  size_read += curr_size_read;
+		  count -= curr_size_read;
 	  }
+	  //printk(KERN_INFO "size read %i\n", size_read);
 	  curr_page_no += 1;
+	  //printk(KERN_INFO "curr_page_no %d\n", curr_page_no);
   }
+  *f_pos += size_read;
   return size_read;
 }
 
@@ -261,6 +271,7 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
   
   struct list_head *ptr = asgn1_device.mem_list.next;
   page_node *curr;
+  //char *tp;
 
   /* COMPLETE ME */
   /**
@@ -271,22 +282,8 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
    *   a while loop / do-while loop is recommended to handle this situation. 
    */
 
-  list_for_each(ptr, &asgn1_device.mem_list) {
-	if(curr_page_no >= begin_page_no) {
-		curr = list_entry(ptr, struct page_node_rec, list);
-		size_to_be_written = min(count, (size_t)PAGE_SIZE);
-		curr_size_written = 0;
-		do {
-			begin_offset = curr_size_written;
-			curr_size_written += copy_from_user
-				(page_address(curr->page), 
-				 &buf, size_to_be_written);
-		} while (curr_size_written < size_to_be_written);
-		size_written += curr_size_written;
-	}
-  }
-
-  while(size_written < count) {
+  //Allocates new page nodes and pages while there is not enough space to perform write
+  while(count > (asgn1_device.num_pages*PAGE_SIZE) - asgn1_device.data_size) {
 	if(!(curr = kmem_cache_alloc(asgn1_device.cache, GFP_KERNEL))){
 		printk(KERN_ERR "failed to allocate memory\n");
 		return -ENOMEM;
@@ -295,20 +292,42 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
 		printk(KERN_ERR "falied to allocate page\n");
 		return -ENOMEM;
 	}
+	//printk(KERN_INFO "page address %x\n", page_address(curr->page));
 	list_add_tail(&(curr->list), &(asgn1_device.mem_list));
 	asgn1_device.num_pages += 1;
-	size_to_be_written = min(count, (size_t)PAGE_SIZE);
-	curr_size_written = 0;
-	do{
-		begin_offset = curr_size_written;
-		curr_size_written += copy_from_user
-			(page_address(curr->page),
-			 &buf, size_to_be_written);
-	} while(curr_size_written < size_to_be_written);
-	size_written += curr_size_written;
+  }
+  //printk(KERN_INFO "number of page %d count %d\n", asgn1_device.num_pages, count);
+  //printk(KERN_INFO "begin page num %d f_pos %d\n", begin_page_no, *f_pos);
+
+  //Loops through pages to find first requested page then performs write
+  list_for_each(ptr, &asgn1_device.mem_list) {
+	if(curr_page_no >= begin_page_no) {
+		curr = list_entry(ptr, struct page_node_rec, list);
+		//printk(KERN_INFO "curr page address %x\n", page_address(curr->page));
+		size_to_be_written = min(count, min((size_t)PAGE_SIZE, (size_t)PAGE_SIZE - (*f_pos%PAGE_SIZE)));
+		curr_size_written = 0;
+		//printk(KERN_INFO "size to be written %i\n", size_to_be_written);
+		do {
+			begin_offset = curr_size_written;
+			//printk(KERN_INFO "begin offset %i\n", begin_offset); 
+			curr_size_written += (size_to_be_written - copy_from_user
+				(page_address(curr->page)+begin_offset, 
+				 buf+begin_offset, size_to_be_written));
+			tp = page_address(curr->page);
+			//printk(KERN_INFO "curr size written %i\n", curr_size_written);
+			//printk(KERN_INFO "The page address %x %c %c %c \n", tp, tp[0], tp[1], tp[2]);
+			if(curr_size_written == 0) {
+				return count;
+			}	
+		} while (curr_size_written < size_to_be_written);
+		size_written += curr_size_written;
+		count -= curr_size_written;
+	}
   }
 
+  //printk(KERN_INFO "The count is %d and size_written is %d\n", count, size_written);
 
+  *f_pos += size_written;
   asgn1_device.data_size = max(asgn1_device.data_size,
                                orig_f_pos + size_written);
   return size_written;
@@ -344,6 +363,7 @@ long asgn1_ioctl (struct file *filp, unsigned cmd, unsigned long arg) {
 		  printk(KERN_ERR "failed to copy nprocs value");
 		  return -EFAULT;
 	  }
+	  //Checks if valid nproc value
 	  if(new_nprocs < 0 || new_nprocs > atomic_read(&asgn1_device.nprocs)){
 		  printk(KERN_WARNING "invalid value for nprocs");
 		  return -EINVAL;
@@ -374,14 +394,14 @@ static int asgn1_mmap (struct file *filp, struct vm_area_struct *vma)
      *   up to the last requested page
      */
 
-    list_for_each(ptr, &asgn1_device.mem_list) {
+    /*list_for_each(ptr, &asgn1_device.mem_list) {
 	    curr = list_entry(ptr, struct page_node_rec, list);
 	    pfn = page_to_pfn(curr->page);
 	    if(remap_pfn_range(vma, vma->vm_start+offset, pfn, PAGE_SIZE
 				    ,vma->vm_page_prot)) 
 		    return -EAGAIN;
 	    offset += PAGE_SIZE;
-    }
+    }*/
 
 
     return 0;
@@ -473,12 +493,12 @@ int __init asgn1_init_module(void){
   atomic_set(&asgn1_device.nprocs, 0);
   atomic_set(&asgn1_device.max_nprocs, 2);
 
+  //Allocate major number
   if(alloc_chrdev_region(&asgn1_device.dev, asgn1_minor, asgn1_dev_count, 
 			  "asgn1") < 0) {
-	printk(KERN_ERR "failed to register device region\n");
-	return -1;
   }
 
+  //Allocate and add cdev
   if(!(asgn1_device.cdev = cdev_alloc())) {
 	printk(KERN_ERR "cdev_alloc() failed\n");
         unregister_chrdev_region(asgn1_device.dev, asgn1_dev_count);
@@ -494,6 +514,7 @@ int __init asgn1_init_module(void){
 
   printk(KERN_INFO "device register successfully");
   
+  //Initlise page list and memory cache
   INIT_LIST_HEAD(&asgn1_device.mem_list);
   
   if(!(asgn1_device.cache = kmem_cache_create("asgn1_device.cache", 
@@ -503,6 +524,7 @@ int __init asgn1_init_module(void){
   }
   printk(KERN_INFO "mem cache allocated");
 
+  //Create proc file
   if(proc_create("asgn1_proc", 0, NULL, &asgn1_proc_ops) == NULL) {
 	printk(KERN_ERR "proc_create failed\n");
 	cdev_del(asgn1_device.cdev);
