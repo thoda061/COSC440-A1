@@ -270,23 +270,42 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
    *   when copy_from_user() writes less than the amount you requested.
    *   a while loop / do-while loop is recommended to handle this situation. 
    */
+	
+  while(count > (asgn1_device.num_pages*PAGE_SIZE) - asgn1_device.data_size) {
+	  if(!(curr = kmem_cache_alloc(asgn1_device.cache, GFP_KERNEL))){
+		printk(KERN_ERR "failed to allocate memory\n");
+		return -ENOMEM;
+	}
+	if(!(curr->page = alloc_page(GFP_KERNEL))){
+		printk(KERN_ERR "falied to allocate page\n");
+		return -ENOMEM;
+	}
+	list_add_tail(&(curr->list), &(asgn1_device.mem_list));
+	asgn1_device.num_pages += 1;
+  }
+  printk(KERN_INFO "number of pages %d\n", asgn1_device.num_pages);
+	
 
   list_for_each(ptr, &asgn1_device.mem_list) {
+	printk(KERN_INFO "current page number %d count %d\n", curr_page_no, count);
 	if(curr_page_no >= begin_page_no) {
 		curr = list_entry(ptr, struct page_node_rec, list);
-		size_to_be_written = min(count, (size_t)PAGE_SIZE);
+		size_to_be_written = min(count, (size_t)PAGE_SIZE, (size_t)(PAGE_SIZE-(*f_pos%PAGE_SIZE)));
+		printk(KERN_INFO "size to be written %i\n", size_to_be_written);
 		curr_size_written = 0;
 		do {
 			begin_offset = curr_size_written;
 			curr_size_written += copy_from_user
-				(page_address(curr->page), 
-				 &buf, size_to_be_written);
+				(page_address(curr->page)+begin_offset, 
+				 &buf+begin_offset, size_to_be_written);
 		} while (curr_size_written < size_to_be_written);
 		size_written += curr_size_written;
 	}
+	curr_page_no += 1;
   }
+  *f_pos += size_written;
 
-  while(size_written < count) {
+  /*while(size_written < count) {
 	if(!(curr = kmem_cache_alloc(asgn1_device.cache, GFP_KERNEL))){
 		printk(KERN_ERR "failed to allocate memory\n");
 		return -ENOMEM;
@@ -306,7 +325,7 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
 			 &buf, size_to_be_written);
 	} while(curr_size_written < size_to_be_written);
 	size_written += curr_size_written;
-  }
+  }*/
 
 
   asgn1_device.data_size = max(asgn1_device.data_size,
