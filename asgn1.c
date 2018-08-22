@@ -184,14 +184,15 @@ ssize_t asgn1_read(struct file *filp, char __user *buf, size_t count,
 		  size_to_be_read = min(count, (size_t)PAGE_SIZE);
 		  curr_size_read = 0;
 		  do {
-	          begin_offset = curr_size_read;
-		  curr_size_read += 
-		 	  copy_to_user(&buf[begin_offset], 
-					  page_address(curr->page),
+	          	begin_offset = curr_size_read;
+		  	curr_size_read += 
+		 	  	copy_to_user(&buf[begin_offset], 
+					  page_address(curr->page)+begin_offset,
 					  size_to_be_read);
-		  printk(KERN_INFO "current read %i\n", curr_size_read);
+		  	printk(KERN_INFO "current read %i\n", curr_size_read);
 		  } while (curr_size_read < size_to_be_read);
 		  size_read += curr_size_read;
+		  count -= curr_size_read;
 	  }
 	  curr_page_no += 1;
   }
@@ -295,11 +296,13 @@ ssize_t asgn1_write(struct file *filp, const char __user *buf, size_t count,
 		curr_size_written = 0;
 		do {
 			begin_offset = curr_size_written;
+			printk(KERN_INFO "current size written %i\n", curr_size_written);
 			curr_size_written += copy_from_user
 				(page_address(curr->page)+begin_offset, 
-				 &buf+begin_offset, size_to_be_written);
+				 &buf[begin_offset], size_to_be_written);
 		} while (curr_size_written < size_to_be_written);
 		size_written += curr_size_written;
+		count -= curr_size_written;
 	}
 	curr_page_no += 1;
   }
